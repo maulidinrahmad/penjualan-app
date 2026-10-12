@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Admin - AppPro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style> body { font-family: 'Inter', sans-serif; } </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+
+    <!-- Header Navbar -->
+    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 bg-indigo-600 text-white font-bold text-xl rounded-xl flex items-center justify-center">A</div>
+                <span class="text-xl font-bold tracking-tight text-white">Dashboard Admin</span>
+            </div>
+            <button id="logoutBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-sm font-medium border border-slate-700 transition">
+                Keluar / Logout
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-10 space-y-8">
+        
+        <!-- Metrics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="p-6 rounded-2xl bg-slate-800 border border-slate-700 shadow-lg">
+                <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Pesanan</p>
+                <p id="totalOrders" class="text-3xl font-extrabold text-white mt-2">0</p>
+            </div>
+            <div class="p-6 rounded-2xl bg-slate-800 border border-slate-700 shadow-lg">
+                <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pendapatan Terverifikasi</p>
+                <p id="totalRevenue" class="text-3xl font-extrabold text-emerald-400 mt-2">Rp 0</p>
+            </div>
+            <div class="p-6 rounded-2xl bg-slate-800 border border-slate-700 shadow-lg">
+                <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Perlu Verifikasi</p>
+                <p id="pendingOrders" class="text-3xl font-extrabold text-amber-400 mt-2">0</p>
+            </div>
+        </div>
+
+        <!-- Grafik Penjualan -->
+        <div class="p-6 rounded-2xl bg-slate-800 border border-slate-700 shadow-lg">
+            <h2 class="text-lg font-bold text-white mb-4">Grafik Tren Penjualan & Omzet</h2>
+            <div class="relative h-72">
+                <canvas id="salesChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Tabel Pesanan / Pembeli -->
+        <div class="p-6 rounded-2xl bg-slate-800 border border-slate-700 shadow-lg space-y-4 overflow-x-auto">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-bold text-white">Daftar Pemesanan & Validasi Pembeli</h2>
+                <span class="text-xs text-slate-400">Klik "Verifikasi" untuk otomatis update status & masukkan email ke Whitelist</span>
+            </div>
+            <table class="w-full text-left text-sm text-slate-300">
+                <thead class="bg-slate-900/50 text-xs uppercase text-slate-400 border-b border-slate-700">
+                    <tr>
+                        <th class="py-3 px-4">Tanggal</th>
+                        <th class="py-3 px-4">Nama Pembeli</th>
+                        <th class="py-3 px-4">WhatsApp (Chat)</th>
+                        <th class="py-3 px-4">Email</th>
+                        <th class="py-3 px-4">Harga</th>
+                        <th class="py-3 px-4">Status</th>
+                        <th class="py-3 px-4 text-center">Aksi Verifikasi</th>
+                    </tr>
+                </thead>
+                <tbody id="ordersTable" class="divide-y divide-slate-700">
+                    <tr>
+                        <td colspan="7" class="py-6 text-center text-slate-500">Memuat data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </main>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Ganti dengan Firebase Config Anda
+        const firebaseConfig = {
+        apiKey: "AIzaSyA_mp6j-ncOLl2HoqzSud4sttnnBhLKGiE",
+        authDomain: "appstore-web-74576.firebaseapp.com",
+        projectId: "appstore-web-74576",
+        storageBucket: "appstore-web-74576.firebasestorage.app",
+        messagingSenderId: "16888091928",
+        appId: "1:16888091928:web:00f478821cada02a357a6d",
+        measurementId: "G-KMXHPGGQH5"
+        };
+
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Proteksi Halaman Admin
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                window.location.href = "login.html";
+            } else {
+                loadDashboardData();
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            signOut(auth).then(() => window.location.href = "login.html");
+        });
+
+        let salesChart;
+
+        function loadDashboardData() {
+            onSnapshot(collection(db, "orders"), (snapshot) => {
+                let orders = [];
+                let totalRev = 0;
+                let pendingCount = 0;
+
+                snapshot.forEach((doc) => {
+                    orders.push({ id: doc.id, ...doc.data() });
+                });
+
+                orders.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+                const tableBody = document.getElementById('ordersTable');
+                tableBody.innerHTML = '';
+
+                if (orders.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-slate-500">Belum ada data pesanan.</td></tr>`;
+                }
+
+                orders.forEach((order) => {
+                    if (order.status === "Verified") totalRev += order.price || 0;
+                    if (order.status === "Pending") pendingCount++;
+
+                    const dateStr = order.createdAt ? new Date(order.createdAt.seconds * 1000).toLocaleDateString('id-ID') : '-';
+                    const statusClass = order.status === 'Verified' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+                    
+                    // Ganti baris pembersihan nomor telepon yang lama dengan kode ini:
+                    let cleanPhone = order.phone.replace(/\D/g, ''); // Hanya mengambil angka saja (menghapus spasi, strip -, dll)
+
+                    // Jika nomor diawali angka 0 (contoh: 0823...), ubah 0 di depan menjadi 62
+                    if (cleanPhone.startsWith('0')) {
+                        cleanPhone = '62' + cleanPhone.slice(1);
+                    }
+
+                    const waMessage = encodeURIComponent(`Halo Kak ${order.name}, terima kasih telah memesan aplikasi AppPro. Silakan transfer Rp 199.000 ke Rekening BCA: 1234567890 a.n Anda. Setelah transfer, mohon kirimkan bukti transfer ke sini ya!`);
+                    const waLink = `https://wa.me/${cleanPhone}?text=${waMessage}`;
+
+                    const row = `
+                        <tr class="hover:bg-slate-800/50">
+                            <td class="py-3 px-4 text-xs text-slate-400">${dateStr}</td>
+                            <td class="py-3 px-4 font-semibold text-white">${order.name}</td>
+                            <td class="py-3 px-4">
+                                <a href="${waLink}" target="_blank" class="inline-flex items-center space-x-1.5 text-emerald-400 hover:underline bg-emerald-500/10 px-2.5 py-1 rounded-lg text-xs font-medium">
+                                    <span>💬 ${order.phone}</span>
+                                </a>
+                            </td>
+                            <td class="py-3 px-4">${order.email}</td>
+                            <td class="py-3 px-4">Rp ${(order.price || 0).toLocaleString('id-ID')}</td>
+                            <td class="py-3 px-4">
+                                <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${statusClass}">
+                                    ${order.status || 'Pending'}
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-center">
+                                ${order.status !== 'Verified' ? `
+                                    <button onclick="verifyOrder('${order.id}', '${order.email}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3.5 py-2 rounded-xl transition font-medium shadow-md shadow-indigo-600/20">
+                                        Verifikasi & Whitelist
+                                    </button>
+                                ` : '<span class="text-xs text-emerald-400 font-semibold">✓ Selesai (Whitelisted)</span>'}
+                            </td>
+                        </tr>
+                    `;
+                    tableBody.innerHTML += row;
+                });
+
+                document.getElementById('totalOrders').textContent = orders.length;
+                document.getElementById('totalRevenue').textContent = `Rp ${totalRev.toLocaleString('id-ID')}`;
+                document.getElementById('pendingOrders').textContent = pendingCount;
+
+                updateChart(orders);
+            });
+        }
+
+        // Fungsi Verifikasi sekaligus mendaftarkan email ke koleksi 'whitelist' di Firestore
+        window.verifyOrder = async function(orderId, email) {
+            if (confirm(`Verifikasi pembayaran untuk ${email} dan masukkan ke Whitelist aplikasi?`)) {
+                try {
+                    // 1. Ubah status pesanan di koleksi "orders" menjadi Verified
+                    await updateDoc(doc(db, "orders", orderId), { status: "Verified" });
+
+                    // 2. Tambahkan email ke koleksi "whitelist" (gunakan email sebagai ID dokumen agar unik)
+                    const cleanEmail = email.toLowerCase().trim();
+                    await setDoc(doc(db, "whitelist", cleanEmail), {
+                        email: cleanEmail,
+                        addedAt: new Date(),
+                        status: "Active"
+                    });
+
+                    alert("Berhasil! Pembayaran diverifikasi dan email pembeli telah dimasukkan ke dalam Whitelist database.");
+                } catch (error) {
+                    console.error("Gagal verifikasi: ", error);
+                    alert("Terjadi kesalahan saat memproses data.");
+                }
+            }
+        };
+
+        function updateChart(orders) {
+            const verifiedOrders = orders.filter(o => o.status === "Verified");
+            
+            const salesByDate = {};
+            verifiedOrders.forEach(o => {
+                const date = o.createdAt ? new Date(o.createdAt.seconds * 1000).toLocaleDateString('id-ID', { month: 'short', day: 'numeric' }) : 'Lainnya';
+                salesByDate[date] = (salesByDate[date] || 0) + (o.price || 0);
+            });
+
+            const labels = Object.keys(salesByDate).reverse();
+            const dataValues = Object.values(salesByDate).reverse();
+
+            const ctx = document.getElementById('salesChart').getContext('2d');
+            if (salesChart) salesChart.destroy();
+
+            salesChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels.length > 0 ? labels : ['Belum Ada Data'],
+                    datasets: [{
+                        label: 'Omzet Penjualan (Rp)',
+                        data: dataValues.length > 0 ? dataValues : [0],
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 3,
+                        pointBackgroundColor: '#6366f1'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8' } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+                        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
